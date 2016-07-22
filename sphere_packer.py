@@ -50,11 +50,11 @@ class RandomSequentialPack(object):
     packing_fraction : float
         Packing fraction of spheres. Exactly one of 'spheres' and
         'packing_fraction' should be specified
-    lattice_dimension : numpy.ndarray
+    lattice_dimension : list
         Number of lattice cells in each dimension
     seed : int
         RNG seed
-    cell_length : numpy.ndarray
+    cell_length : list
         Length of lattice cells in each dimension
     sphere_volume : float
         volume of each sphere
@@ -261,7 +261,7 @@ class RandomSequentialPack(object):
 
         Returns
         -------
-        coordinates : ndarray
+        coordinates : list
             Cartesian coordinates of sphere center
 
         """
@@ -279,7 +279,7 @@ class RandomSequentialPack(object):
 
         Returns
         -------
-        coordinates : ndarray
+        coordinates : list
             Cartesian coordinates of sphere center
 
         """
@@ -296,7 +296,7 @@ class RandomSequentialPack(object):
 
         Returns
         -------
-        coordinates : ndarray
+        coordinates : list
             Cartesian coordinates of sphere center
 
         """
@@ -308,13 +308,13 @@ class RandomSequentialPack(object):
         return [r*i for i in x]
 
 
-    def _cell_index_cube(self, point):
+    def _cell_index_cube(self, p):
         """Calculate the index of the lattice cell the given sphere center
         falls in
 
         Parameters
         ----------
-        point : ndarray
+        p : list
             Cartesian coordinates of sphere center
 
         Returns
@@ -324,16 +324,16 @@ class RandomSequentialPack(object):
 
         """
 
-        return [int(point[i]/self.cell_length[i]) for i in range(3)]
+        return [int(p[i]/self.cell_length[i]) for i in range(3)]
 
 
-    def _cell_index_cylinder(self, point):
+    def _cell_index_cylinder(self, p):
         """Calculate the index of the lattice cell the given sphere center
         falls in
 
         Parameters
         ----------
-        point : ndarray
+        p : list
             Cartesian coordinates of sphere center
 
         Returns
@@ -343,18 +343,18 @@ class RandomSequentialPack(object):
 
         """
 
-        return [int((point[0] + self.domain_radius)/self.cell_length[0]),
-                int((point[1] + self.domain_radius)/self.cell_length[1]),
-                int(point[2]/self.cell_length[2])]
+        return [int((p[0] + self.domain_radius)/self.cell_length[0]),
+                int((p[1] + self.domain_radius)/self.cell_length[1]),
+                int(p[2]/self.cell_length[2])]
 
 
-    def _cell_index_sphere(self, point):
+    def _cell_index_sphere(self, p):
         """Calculate the index of the lattice cell the given sphere center
         falls in
 
         Parameters
         ----------
-        point : ndarray
+        p : list
             Cartesian coordinates of sphere center
 
         Returns
@@ -364,21 +364,21 @@ class RandomSequentialPack(object):
 
         """
 
-        return [int((point[i] + self.domain_radius)/self.cell_length[i])
+        return [int((p[i] + self.domain_radius)/self.cell_length[i])
                 for i in range(3)]
 
 
-    def _cell_list_cube(self, point, distance):
+    def _cell_list_cube(self, p, d):
         """Return the indices of all cells within the given distance of the
         point.
 
         Parameters
         ----------
-        point : ndarray
+        p : list
             Cartesian coordinates of sphere center
-        distance : float
-            Find all lattice cells that are within a radius of length
-            'distance' from the sphere center
+        d : float
+	    Find all lattice cells that are within a radius of length 'd' from
+            the sphere center
 
         Returns
         -------
@@ -387,24 +387,23 @@ class RandomSequentialPack(object):
 
         """
 
-        r = [[i/self.cell_length[j] for i in [point[j] - distance, point[j],
-             point[j] + distance] if i > 0 and i < self.domain_length]
-             for j in range(3)]
+        r = [[i/self.cell_length[j] for i in [p[j] - d, p[j], p[j] + d]
+             if i > 0 and i < self.domain_length] for j in range(3)]
 
         return list(itertools.product(*({int(i) for i in j} for j in r)))
 
 
-    def _cell_list_cylinder(self, point, distance):
+    def _cell_list_cylinder(self, p, d):
         """Return the indices of all cells within the given distance of the
         point.
 
         Parameters
         ----------
-        point : ndarray
+        p : list
             Cartesian coordinates of sphere center
-        distance : float
-            Find all lattice cells that are within a radius of length
-            'distance' from the sphere center
+        d : float
+	    Find all lattice cells that are within a radius of length 'd' from
+            the sphere center
 
         Returns
         -------
@@ -413,28 +412,27 @@ class RandomSequentialPack(object):
 
         """
 
-        x,y = [[(i + self.domain_radius)/self.cell_length[j] for i in 
-               [point[j] - distance, point[j], point[j] + distance]
-               if i > -self.domain_radius and i < self.domain_radius]
-               for j in range(2)]
+        x,y = [[(i + self.domain_radius)/self.cell_length[j] for i in
+               [p[j] - d, p[j], p[j] + d] if i > -self.domain_radius and
+               i < self.domain_radius] for j in range(2)]
 
-        z = [i/self.cell_length[2] for i in [point[2] - distance, point[2],
-             point[2] + distance] if i > 0 and i < self.domain_length]
+        z = [i/self.cell_length[2] for i in [p[2] - d, p[2], p[2] + d]
+             if i > 0 and i < self.domain_length]
 
         return list(itertools.product(*({int(i) for i in j} for j in (x,y,z))))
 
 
-    def _cell_list_sphere(self, point, distance):
+    def _cell_list_sphere(self, p, d):
         """Return the indices of all cells within the given distance of the
         point.
 
         Parameters
         ----------
-        point : ndarray
+        p : list
             Cartesian coordinates of sphere center
-        distance : float
-            Find all lattice cells that are within a radius of length
-            'distance' from the sphere center
+        d : float
+	    Find all lattice cells that are within a radius of length 'd' from
+            the sphere center
 
         Returns
         -------
@@ -444,9 +442,8 @@ class RandomSequentialPack(object):
         """
 
         r = [[(i + self.domain_radius)/self.cell_length[j] for i in
-             [point[j] - distance, point[j], point[j] + distance] 
-             if i > -self.domain_radius and i < self.domain_radius]
-             for j in range(3)]
+             [p[j] - d, p[j], p[j] + d] if i > -self.domain_radius and
+             i < self.domain_radius] for j in range(3)]
 
         return list(itertools.product(*({int(i) for i in j} for j in r)))
 
@@ -457,7 +454,7 @@ class RandomSequentialPack(object):
 
         Returns
         -------
-        spheres : numpy.ndarray
+        spheres : list
             Cartesian coordinates of all spheres in the domain.
 
         """
