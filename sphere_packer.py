@@ -459,29 +459,21 @@ class CloseRandomPack(object):
         self.spheres[i] = self.spheres[i] + r*v
         self.spheres[j] = self.spheres[j] - r*v
 
-        a = self.radius - self.domain_radius
-        b = self.domain_radius - self.radius
-        c = self.radius
-        d = self.domain_length - self.radius
+        a = (self.radius-self.domain_radius,
+             self.radius-self.domain_radius, self.radius)
+        b = (self.domain_radius-self.radius,
+             self.domain_radius-self.radius, self.domain_length-self.radius)
 
         # Apply reflective boundary conditions
-        for k in range(2):
-            if self.spheres[i][k] < a:
-                self.spheres[i][k] = a
-            elif self.spheres[i][k] > b:
-                self.spheres[i][k] = b
-            if self.spheres[j][k] < a:
-                self.spheres[j][k] = a
-            elif self.spheres[j][k] > b:
-                self.spheres[j][k] = b
-        if self.spheres[i][2] < c:
-            self.spheres[i][2] = c
-        elif self.spheres[i][2] > d:
-            self.spheres[i][2] = d
-        if self.spheres[j][2] < c:
-            self.spheres[j][2] = c
-        elif self.spheres[j][2] > d:
-            self.spheres[j][2] = d
+        for k in range(3):
+            if self.spheres[i][k] < a[k]:
+                self.spheres[i][k] = a[k]
+            elif self.spheres[i][k] > b[k]:
+                self.spheres[i][k] = b[k]
+            if self.spheres[j][k] < a[k]:
+                self.spheres[j][k] = a[k]
+            elif self.spheres[j][k] > b[k]:
+                self.spheres[j][k] = b[k]
 
 
     def _repel_spheres_sphere(self, i, j, d):
@@ -550,7 +542,6 @@ class CloseRandomPack(object):
         return j, dists[j]
 
 
-    @profile
     def _update_rod_list(self, i, j):
         """Update the rod list with the new nearest neighbors of spheres i and
            j since their overlap was eliminated
