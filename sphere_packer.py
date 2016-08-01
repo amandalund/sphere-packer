@@ -542,6 +542,7 @@ class CloseRandomPack(object):
         return j, dists[j]
 
 
+    @profile
     def _update_rod_list(self, i, j):
         """Update the rod list with the new nearest neighbors of spheres i and
            j since their overlap was eliminated
@@ -562,10 +563,14 @@ class CloseRandomPack(object):
         # the rod containing k from the rod list and add rod k-i keeping rod
         # list sorted
         if self._nearest(k)[0] == i:
-            self.rods = [x for x in self.rods if not k in x[1:3]]
+            m = next((self.rods.index(x) for x in self.rods if k in x[1:3]), None)
+            if m is not None:
+                del self.rods[m]
             bisect.insort_left(self.rods, [d_ik, min(i,k), max(i,k)])
         if self._nearest(l)[0] == j:
-            self.rods = [x for x in self.rods if not l in x[1:3]]
+            m = next((self.rods.index(x) for x in self.rods if l in x[1:3]), None)
+            if m is not None:
+                del self.rods[m]
             bisect.insort_left(self.rods, [d_jl, min(j,l), max(j,l)])
 
         # Set inner diameter to the shortest distance between two sphere
