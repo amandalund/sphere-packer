@@ -542,7 +542,6 @@ class CloseRandomPack(object):
         return j, dists[j]
 
 
-    @profile
     def _update_rod_list(self, i, j):
         """Update the rod list with the new nearest neighbors of spheres i and
            j since their overlap was eliminated
