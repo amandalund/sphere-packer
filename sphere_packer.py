@@ -81,8 +81,14 @@ class CloseRandomPack(object):
     spheres : numpy.ndarray, shape = [n_spheres, 3]
         Cartesian coordinates of sphere centers
     rods : list, shape = [n_rods, 3]
-        Sorted list of rods where each element contains the distance between
-        the sphere centers and the indices of the two spheres
+	List of rods arranged in a heap where each element contains the
+        distance between the sphere centers and the indices of the two spheres
+    mapping : dict
+	Mapping of sphere ids to rods. Each key in the dict is the id of a
+        sphere that is in the rod list, and the value is the id of its nearest
+	neighbor and the rod that contains them. The dict is used to find rods
+	in the priority queue and to mark removed rods so rods can be "removed"
+        without breaking the heap structure invariant.
 
     """
 
@@ -124,7 +130,6 @@ class CloseRandomPack(object):
         self.outer_diameter = self.initial_outer_diameter
         self.spheres = None
         self.rods = None
-        self.partner = None
         self.mapping = None
 
     @property
@@ -334,7 +339,7 @@ class CloseRandomPack(object):
 
 
     def _add_rod(self, d, i, j):
-        """Add a new rod to the priority queue
+        """Add a new rod to the priority queue.
 
         Parameters
         ----------
@@ -347,12 +352,9 @@ class CloseRandomPack(object):
 
         """
 
-        a = min(i,j)
-        b = max(i,j)
-        self.partner[i] = (j, a, b)
-        self.partner[j] = (i, a, b)
-        rod = [d, a, b]
-        self.mapping[(a,b)] = rod
+        rod = [d, i, j]
+        self.mapping[i] = j, rod
+        self.mapping[j] = i, rod
         heappush(self.rods, rod)
 
 
@@ -366,17 +368,15 @@ class CloseRandomPack(object):
 
         """
 
-        if i in self.partner:
-            j, a, b = self.partner.pop(i)
-            del self.partner[j]
-            rod = self.mapping.pop((a,b))
-            rod[-1] = None
-            rod[-2] = None
+        if i in self.mapping:
+            j, rod = self.mapping.pop(i)
+            del self.mapping[j]
+            rod[1] = None
+            rod[2] = None
 
 
     def _pop_rod(self):
-	"""Remove and return the shortest rod (the indices of the two nearest
-        spheres and the distance between them).
+	"""Remove and return the shortest rod.
 
         Returns
         -------
@@ -393,9 +393,8 @@ class CloseRandomPack(object):
         while self.rods:
             d, i, j = heappop(self.rods)
             if i is not None and j is not None:
-                del self.mapping[(i,j)]
-                del self.partner[i]
-                del self.partner[j]
+                del self.mapping[i]
+                del self.mapping[j]
                 return d, i, j
 
 
@@ -437,7 +436,6 @@ class CloseRandomPack(object):
 
         # Add rods to priority queue
         self.rods = []
-        self.partner = {}
         self.mapping = {}
         for d, i, j in r:
             self._add_rod(d, i, j)
