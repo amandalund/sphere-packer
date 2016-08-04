@@ -3,6 +3,8 @@ import numpy as np
 import itertools
 import bisect
 import scipy.spatial
+import heapq
+from heapq import *
 from scipy.spatial.distance import cdist
 from collections import defaultdict
 from math import pi, floor, log10
@@ -122,6 +124,8 @@ class CloseRandomPack(object):
         self.outer_diameter = self.initial_outer_diameter
         self.spheres = None
         self.rods = None
+        self.partner = None
+        self.mapping = None
 
     @property
     def radius(self):
@@ -329,6 +333,39 @@ class CloseRandomPack(object):
         return x * (r/np.sum(x**2, axis=1)**.5)[:, np.newaxis]
 
 
+    def add_rod(self, d, i, j):
+        'Add a new rod'
+        a = min(i,j)
+        b = max(i,j)
+        self.partner[i] = (j, a, b)
+        self.partner[j] = (i, a, b)
+        rod = [d, a, b]
+        self.mapping[(a,b)] = rod
+        heappush(self.rods, rod)
+
+
+    def remove_rod(self, i):
+        'Mark an existing rod as REMOVED.  Raise KeyError if not found.'
+        if i in self.partner:
+            s = self.partner.pop(i)
+            del self.partner[s[0]]
+            rod = self.mapping.pop((s[1],s[2]))
+            rod[-1] = None
+            rod[-2] = None
+
+
+    def pop_rod(self):
+        'Remove and return the lowest priority task. Raise KeyError if empty.'
+        while self.rods:
+            d, i, j = heappop(self.rods)
+            if i is not None and j is not None:
+                del self.mapping[(i,j)]
+                del self.partner[i]
+                del self.partner[j]
+                return d, i, j
+        raise KeyError('pop from an empty priority queue')
+
+
     def _create_rod_list(self):
         """Generate sorted list of rods (distances between sphere centers). A
         rod between spheres p and q is only included in the list if the
@@ -359,12 +396,18 @@ class CloseRandomPack(object):
 
         # Find the intersection between p and q: a list of spheres who are each
         # other's nearest neighbors and the distance between them
-        self.rods = [x for x in {tuple(x) for x in a} & {tuple(x) for x in b}]
+        r = [x for x in {tuple(x) for x in a} & {tuple(x) for x in b}]
 
         # Remove duplicate rods and sort by distance
-        self.rods = sorted(
-            map(list, set([(x[2], int(min(x[0:2])), int(max(x[0:2])))
-            for x in self.rods if x[2] <= 2*self.radius])))
+        r = map(list, set([(x[2], int(min(x[0:2])), int(max(x[0:2])))
+                for x in r if x[2] <= 2*self.radius]))
+
+        # Add rods to priority queue
+        self.rods = []
+        self.partner = {}
+        self.mapping = {}
+        for d, i, j in r:
+            self.add_rod(d, i, j)
 
         # Inner diameter is set initially to the shortest center-to-center
 	# distance between two spheres
@@ -562,15 +605,11 @@ class CloseRandomPack(object):
         # the rod containing k from the rod list and add rod k-i keeping rod
         # list sorted
         if self._nearest(k)[0] == i:
-            m = next((self.rods.index(x) for x in self.rods if k in x[1:3]), None)
-            if m is not None:
-                del self.rods[m]
-            bisect.insort_left(self.rods, [d_ik, min(i,k), max(i,k)])
+            self.remove_rod(k)
+            self.add_rod(d_ik, i, k)
         if self._nearest(l)[0] == j:
-            m = next((self.rods.index(x) for x in self.rods if l in x[1:3]), None)
-            if m is not None:
-                del self.rods[m]
-            bisect.insort_left(self.rods, [d_jl, min(j,l), max(j,l)])
+            self.remove_rod(l)
+            self.add_rod(d_jl, j, l)
 
         # Set inner diameter to the shortest distance between two sphere
         # centers
@@ -625,7 +664,7 @@ class CloseRandomPack(object):
 
                 # Get indices of the two closest spheres and the distance between
                 # their centers
-                d, i, j = self.rods.pop(0)
+                d, i, j = self.pop_rod()
 
                 self._reduce_outer_diameter()
 
@@ -638,5 +677,10 @@ class CloseRandomPack(object):
 
                 if self.inner_diameter >= diameter or not self.rods:
                     break
+
+        print "Inner diameter: {}".format(self.inner_diameter)
+        print "Outer diameter: {}".format(self.outer_diameter)
+        print "Inner packing fraction: {}".format(self.inner_packing_fraction)
+        print "Outer packing fraction: {}".format(self.outer_packing_fraction)
 
         return self.spheres
