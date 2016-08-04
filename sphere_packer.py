@@ -542,7 +542,6 @@ class CloseRandomPack(object):
         return j, dists[j]
 
 
-    @profile
     def _update_rod_list(self, i, j):
         """Update the rod list with the new nearest neighbors of spheres i and
            j since their overlap was eliminated
@@ -639,5 +638,10 @@ class CloseRandomPack(object):
 
                 if self.inner_diameter >= diameter or not self.rods:
                     break
+
+        print "Inner diameter: {}".format(self.inner_diameter)
+        print "Outer diameter: {}".format(self.outer_diameter)
+        print "Inner packing fraction: {}".format(self.inner_packing_fraction)
+        print "Outer packing fraction: {}".format(self.outer_packing_fraction)
 
         return self.spheres
