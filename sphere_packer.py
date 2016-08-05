@@ -1,7 +1,6 @@
 from __future__ import division
 import numpy as np
 import itertools
-import bisect
 import scipy.spatial
 import heapq
 from heapq import *
@@ -39,6 +38,8 @@ class CloseRandomPack(object):
         'packing_fraction' should be specified
     contraction_rate : float
         Contraction rate of outer diameter
+    lattice_dimension : array_like, optional
+        Number of lattice cells in each dimension
     seed : int, optional
         RNG seed
 
@@ -60,6 +61,10 @@ class CloseRandomPack(object):
         'packing_fraction' should be specified
     contraction_rate : float
         Contraction rate of outer diameter
+    lattice_dimension : list
+        Number of lattice cells in each dimension
+    cell_length : list
+        Length of lattice cells in each dimension
     seed : int
         RNG seed
     sphere_volume : float
@@ -94,7 +99,7 @@ class CloseRandomPack(object):
 
     def __init__(self, radius, geometry='cylinder', domain_length=None,
                  domain_radius=None, n_spheres=None, packing_fraction=None,
-                 contraction_rate=None, seed=1):
+                 contraction_rate=None, lattice_dimension=None, seed=1):
         # Initialize RandomSequentialPacker class attributes
         self._n_spheres = None
         self._packing_fraction = None
@@ -103,7 +108,9 @@ class CloseRandomPack(object):
         self._domain_length = None
         self._domain_radius = None
         self._contraction_rate = None
+        self._lattice_dimension = None
         self._seed = None
+        self._cell_length = None
         self._inner_diameter = None
         self._outer_diameter= None
 
@@ -120,6 +127,28 @@ class CloseRandomPack(object):
             self.n_spheres = n_spheres
         if packing_fraction is not None:
             self.packing_fraction = packing_fraction
+        if lattice_dimension is None:
+            n = int(self.domain_length/(4*self.radius))
+            m = int(self.domain_radius/(2*self.radius))
+            if self.geometry is 'cube':
+                self.lattice_dimension = [n, n, n]
+            elif self.geometry is 'cylinder':
+                self.lattice_dimension = [m, m, n]
+            elif self.geometry is 'sphere':
+                self.lattice_dimension = [m, m, m]
+        else:
+            self.lattice_dimension = lattice_dimension
+        if self.geometry is 'cube':
+            self.cell_length = [self.domain_length/i for i in
+                                self.lattice_dimension]
+        elif self.geometry is 'cylinder':
+            self.cell_length = [
+                2*self.domain_radius/self.lattice_dimension[0],
+                2*self.domain_radius/self.lattice_dimension[1],
+                self.domain_length/self.lattice_dimension[2]]
+        elif self.geometry is 'sphere':
+            self.cell_length = [2*self.domain_radius/i for i in
+                                self.lattice_dimension]
         if contraction_rate is not None:
             self.contraction_rate = contraction_rate
         else:
@@ -129,8 +158,10 @@ class CloseRandomPack(object):
                                           (self.n_spheres * 4/3 * pi))**(1/3)
         self.outer_diameter = self.initial_outer_diameter
         self.spheres = None
-        self.rods = None
-        self.mapping = None
+        self.rods = []
+        self.mapping = {}
+        self.mesh = defaultdict(set)
+        self.mesh_map = defaultdict(set)
 
     @property
     def radius(self):
@@ -161,8 +192,16 @@ class CloseRandomPack(object):
         return self._contraction_rate
 
     @property
+    def lattice_dimension(self):
+        return self._lattice_dimension
+
+    @property
     def seed(self):
         return self._seed
+
+    @property
+    def cell_length(self):
+        return self._cell_length
 
     @property
     def sphere_volume(self):
@@ -266,9 +305,37 @@ class CloseRandomPack(object):
                              'positive.'.format(contraction_rate))
         self._contraction_rate = contraction_rate
 
+    @lattice_dimension.setter
+    def lattice_dimension(self, lattice_dimension):
+        d = np.asarray(lattice_dimension)
+        if d.size is not 3:
+            raise ValueError('Unable to set lattice dimension of size {}: '
+                             'must be size 3 array specifying number of '
+                             'cells in x, y, and z dimensions of the '
+                             'lattice'.format(d.size))
+        if any(n < 0 for n in d):
+            raise ValueError('Lattice dimensions must be positive values.')
+        msg = ('Length of lattice cells must be smaller than 2 x sphere '
+	       'diameter. Reduce either lattice dimension or sphere radius.')
+        if self.geometry is 'cube' and (
+            any(self.domain_length/n < 4*self.radius for n in d)):
+                raise ValueError(msg)
+        elif self.geometry is 'cylinder' and (
+            any(self.domain_radius/n < 2*self.radius for n in d[0:1]) or
+            self.domain_length/d[2] < 4*self.radius):
+                raise ValueError(msg)
+        elif self.geometry is 'sphere' and (
+            any(self.domain_radius/n < 2*self.radius for n in d)):
+                raise ValueError(msg)
+        self._lattice_dimension = [i for i in d]
+
     @seed.setter
     def seed(self, seed):
         self._seed = seed
+
+    @cell_length.setter
+    def cell_length(self, cell_length):
+        self._cell_length = cell_length
 
     @inner_diameter.setter
     def inner_diameter(self, inner_diameter):
@@ -434,9 +501,9 @@ class CloseRandomPack(object):
         r = map(list, set([(x[2], int(min(x[0:2])), int(max(x[0:2])))
                 for x in r if x[2] <= 2*self.radius]))
 
-        # Add rods to priority queue
-        self.rods = []
-        self.mapping = {}
+        # Clear priority queue and add rods
+        del self.rods[:]
+        self.mapping.clear()
         for d, i, j in r:
             self._add_rod(d, i, j)
 
@@ -481,6 +548,12 @@ class CloseRandomPack(object):
             distance between centers of spheres i and j
 
         """
+        # Determine which lattice cells the spheres are in and remove the
+        # sphere ids from those cells
+        for idx in self.mesh_map[i]:
+            self.mesh[idx].remove(i)
+        for idx in self.mesh_map[j]:
+            self.mesh[idx].remove(j)
 
 	# Moving each sphere distance 'r' away from the other along the line
 	# joining the sphere centers will ensure their final distance is equal
@@ -504,6 +577,13 @@ class CloseRandomPack(object):
                 self.spheres[j][k] = a
             elif self.spheres[j][k] > b:
                 self.spheres[j][k] = b
+
+        # Determine which lattice cells are within one diameter of sphere's
+        # center and add this sphere to the list of spheres in those cells
+        for idx in self._cell_list_cube(i, 2*self.radius):
+            self.mesh[idx].add(i)
+        for idx in self._cell_list_cube(j, 2*self.radius):
+            self.mesh[idx].add(j)
 
 
     def _repel_spheres_cylinder(self, i, j, d):
@@ -611,9 +691,16 @@ class CloseRandomPack(object):
         # Need the second nearest neighbor of i since the nearest neighbor
         # will be itself. Using argpartition, the k-th nearest neighbor is
         # placed at index k.
-        dists = cdist([self.spheres[i]], self.spheres)[0]
-        j = np.argpartition(dists, 1)[1]
-        return j, dists[j]
+        #dists = cdist([self.spheres[i]], self.spheres)[0]
+        #j = np.argpartition(dists, 1)[1]
+        #return j, dists[j]
+        idx = list(self.mesh[self._cell_index_cube(i)])
+        dists = cdist([self.spheres[i]], self.spheres[idx])[0]
+        try:
+            j = dists.argpartition(1)[1]
+            return idx[j], dists[j]
+        except:
+            return None, None
 
 
     def _update_rod_list(self, i, j):
@@ -629,16 +716,16 @@ class CloseRandomPack(object):
 
         """
 
-        k, d_ik = self._nearest(i)
-        l, d_jl = self._nearest(j)
-
         # If the nearest neighbor k of sphere i has no nearer neighbors, remove
         # the rod containing k from the rod list and add rod k-i keeping rod
         # list sorted
-        if self._nearest(k)[0] == i:
+        k, d_ik = self._nearest(i)
+        print i, k, d_ik
+        if k and self._nearest(k)[0] == i:
             self._remove_rod(k)
             self._add_rod(d_ik, i, k)
-        if self._nearest(l)[0] == j:
+        l, d_jl = self._nearest(j)
+        if l and self._nearest(l)[0] == j:
             self._remove_rod(l)
             self._add_rod(d_jl, j, l)
 
@@ -646,6 +733,150 @@ class CloseRandomPack(object):
         # centers
         if self.rods:
             self.inner_diameter = self.rods[0][0]
+
+
+    def _cell_index_cube(self, i):
+        """Calculate the index of the lattice cell the given sphere center
+        falls in
+
+        Parameters
+        ----------
+        i : int
+            Index of sphere in spheres array
+
+        Returns
+        -------
+        index : tuple
+            indices of lattice cell
+
+        """
+
+        return tuple(int(self.spheres[i][j]/self.cell_length[j]) for j in range(3))
+
+
+    def _cell_index_cylinder(self, i):
+        """Calculate the index of the lattice cell the given sphere center
+        falls in
+
+        Parameters
+        ----------
+        i : int
+            Index of sphere in spheres array
+
+        Returns
+        -------
+        index : tuple
+            indices of lattice cell
+
+        """
+
+        return tuple(int((self.spheres[i][0] + self.domain_radius)/self.cell_length[0]),
+                     int((self.spheres[i][1] + self.domain_radius)/self.cell_length[1]),
+                     int(self.spheres[i][2]/self.cell_length[2]))
+
+
+    def _cell_index_sphere(self, i):
+        """Calculate the index of the lattice cell the given sphere center
+        falls in
+
+        Parameters
+        ----------
+        i : int
+            Index of sphere in spheres array
+
+        Returns
+        -------
+        index : tuple
+            indices of lattice cell
+
+        """
+
+        return tuple(int((self.spheres[i][j] + self.domain_radius)/self.cell_length[j])
+                     for j in range(3))
+
+
+    def _cell_list_cube(self, i, d):
+        """Return the indices of all cells within the given distance of the
+        point.
+
+        Parameters
+        ----------
+        i : int
+            Index of sphere in spheres array
+        d : float
+	    Find all lattice cells that are within a radius of length 'd' from
+            the sphere center
+
+        Returns
+        -------
+        indices : list of tuples
+            indices of lattice cells
+
+        """
+
+        r = [[a/self.cell_length[j] for a in
+             [self.spheres[i][j]-d, self.spheres[i][j], self.spheres[i][j]+d]
+             if a > 0 and a < self.domain_length] for j in range(3)]
+
+        return list(itertools.product(*({int(j) for j in k} for k in r)))
+
+
+    def _cell_list_cylinder(self, i, d):
+        """Return the indices of all cells within the given distance of the
+        point.
+
+        Parameters
+        ----------
+        i : int
+            Index of sphere in spheres array
+        d : float
+	    Find all lattice cells that are within a radius of length 'd' from
+            the sphere center
+
+        Returns
+        -------
+        indices : list of tuples
+            indices of lattice cells
+
+        """
+
+	x,y = [[(a + self.domain_radius)/self.cell_length[j] for a in
+	       [self.spheres[i][j]-d, self.spheres[i][j], self.spheres[i][j]+d]
+               if a > -self.domain_radius and a < self.domain_radius]
+               for j in range(2)]
+
+	z = [a/self.cell_length[2] for a in
+             [self.spheres[i][2]-d, self.spheres[i][2], self.spheres[i][2]+d]
+             if a > 0 and a < self.domain_length]
+
+        return list(itertools.product(*({int(j) for j in k} for k in (x,y,z))))
+
+
+    def _cell_list_sphere(self, i, d):
+        """Return the indices of all cells within the given distance of the
+        point.
+
+        Parameters
+        ----------
+        i : int
+            Index of sphere in spheres array
+        d : float
+	    Find all lattice cells that are within a radius of length 'd' from
+            the sphere center
+
+        Returns
+        -------
+        indices : list of tuples
+            indices of lattice cells
+
+        """
+
+        r = [[(a + self.domain_radius)/self.cell_length[j] for a in
+	     [self.spheres[i][j]-d, self.spheres[i][j], self.spheres[i][j]+d]
+             if a > -self.domain_radius and a < self.domain_radius]
+             for j in range(3)]
+
+        return list(itertools.product(*({int(j) for j in k} for k in r)))
 
 
     def pack(self):
@@ -680,6 +911,10 @@ class CloseRandomPack(object):
         # sequential pack)
         # Randomly choose position of sphere centers within the domain
         self.spheres = random_points()
+
+        for i in range(self.n_spheres):
+            for idx in self._cell_list_cube(i, diameter):
+                self.mesh[idx].add(i)
 
         while True:
 
