@@ -499,7 +499,7 @@ class CloseRandomPack(object):
 
         # Remove duplicate rods and sort by distance
         r = map(list, set([(x[2], int(min(x[0:2])), int(max(x[0:2])))
-                for x in r if x[2] <= 2*self.radius]))
+                for x in r]))
 
         # Clear priority queue and add rods
         del self.rods[:]
@@ -720,7 +720,6 @@ class CloseRandomPack(object):
         # the rod containing k from the rod list and add rod k-i keeping rod
         # list sorted
         k, d_ik = self._nearest(i)
-        print i, k, d_ik
         if k and self._nearest(k)[0] == i:
             self._remove_rod(k)
             self._add_rod(d_ik, i, k)
