@@ -691,9 +691,6 @@ class CloseRandomPack(object):
         # Need the second nearest neighbor of i since the nearest neighbor
         # will be itself. Using argpartition, the k-th nearest neighbor is
         # placed at index k.
-        #dists = cdist([self.spheres[i]], self.spheres)[0]
-        #j = np.argpartition(dists, 1)[1]
-        #return j, dists[j]
         idx = list(self.mesh[self._cell_index_cube(i)])
         dists = cdist([self.spheres[i]], self.spheres[idx])[0]
         try:
