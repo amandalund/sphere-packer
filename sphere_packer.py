@@ -432,7 +432,7 @@ class CloseRandomPack(object):
 
         # Remove duplicate rods and sort by distance
         r = map(list, set([(x[2], int(min(x[0:2])), int(max(x[0:2])))
-                for x in r if x[2] <= 2*self.radius]))
+                for x in r]))
 
         # Add rods to priority queue
         self.rods = []
@@ -708,10 +708,5 @@ class CloseRandomPack(object):
 
                 if self.inner_diameter >= diameter or not self.rods:
                     break
-
-        print "Inner diameter: {}".format(self.inner_diameter)
-        print "Outer diameter: {}".format(self.outer_diameter)
-        print "Inner packing fraction: {}".format(self.inner_packing_fraction)
-        print "Outer packing fraction: {}".format(self.outer_packing_fraction)
 
         return self.spheres
