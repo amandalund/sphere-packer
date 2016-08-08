@@ -2,6 +2,8 @@ from __future__ import division
 import numpy as np
 import itertools
 import scipy.spatial
+import random
+from random import uniform, gauss
 import heapq
 from heapq import heappush, heappop
 from scipy.spatial.distance import cdist
@@ -158,7 +160,7 @@ class CloseRandomPack(object):
         if self.geometry is 'cube':
             self.cell_length = [self.domain_length/i for i in
                                 self.lattice_dimension]
-            self.random_points = self._random_points_cube
+            self.random_point = self._random_point_cube
             self.cell_list = self._cell_list_cube
             self.cell_index = self._cell_index_cube
             self.bc_min = 3*(self.radius,)
@@ -168,7 +170,7 @@ class CloseRandomPack(object):
                 2*self.domain_radius/self.lattice_dimension[0],
                 2*self.domain_radius/self.lattice_dimension[1],
                 self.domain_length/self.lattice_dimension[2]]
-            self.random_points = self._random_points_cylinder
+            self.random_point = self._random_point_cylinder
             self.cell_list = self._cell_list_cylinder
             self.cell_index = self._cell_index_cylinder
             self.bc_min = (self.radius-self.domain_radius,
@@ -179,7 +181,7 @@ class CloseRandomPack(object):
         elif self.geometry is 'sphere':
             self.cell_length = [2*self.domain_radius/i for i in
                                 self.lattice_dimension]
-            self.random_points = self._random_points_sphere
+            self.random_point = self._random_point_sphere
             self.cell_list = self._cell_list_sphere
             self.cell_index = self._cell_index_sphere
             self.bc_min = 3*(self.radius-self.domain_radius,)
@@ -195,7 +197,7 @@ class CloseRandomPack(object):
         self.initial_outer_diameter = 2 * (self.domain_volume / 
                                           (self.n_spheres * 4/3 * pi))**(1/3)
         self.outer_diameter = self.initial_outer_diameter
-        self.spheres = None
+        self.spheres = []
         self.rods = []
         self.rods_map = {}
         self.mesh = defaultdict(set)
@@ -396,23 +398,23 @@ class CloseRandomPack(object):
         self._initial_outer_diameter = initial_outer_diameter
 
 
-    def _random_points_cube(self):
-        """Generate Cartesian coordinates of sphere centers of spheres that are
+    def _random_point_cube(self):
+        """Generate Cartesian coordinates of sphere center of a sphere that is
         contained entirely within cubic domain with uniform probability.
 
         Returns
         -------
-        coordinates : numpy.ndarray
-            Cartesian coordinates of sphere centers
+        coordinates : list
 
+            Cartesian coordinates of sphere center
         """
 
-        return np.random.uniform(self.radius, self.domain_length - self.radius,
-                                 (self.n_spheres, 3))
+        a, b = self.radius, self.domain_length - self.radius
+        return [uniform(a, b), uniform(a, b), uniform(a, b)]
 
 
-    def _random_points_cylinder(self):
-        """Generate Cartesian coordinates of sphere centers of spheres that are
+    def _random_point_cylinder(self):
+        """Generate Cartesian coordinates of sphere center of a sphere that is
         contained entirely within cylindrical domain with uniform probability.
         See http://mathworld.wolfram.com/DiskPointPicking.html for generating
         random points on a disk
@@ -424,17 +426,14 @@ class CloseRandomPack(object):
 
         """
 
-        t = np.random.uniform(0, 2*pi, self.n_spheres)
-        r = np.random.uniform(0, (self.domain_radius - self.radius)**2,
-                                  self.n_spheres)**.5
-    
-        return np.dstack((r*np.cos(t), r*np.sin(t),
-                         np.random.uniform(self.radius, self.domain_length -
-                         self.radius, self.n_spheres)))[0]
+        r = uniform(0, (self.domain_radius - self.radius)**2)**.5
+        t = uniform(0, 2*pi)
+        return [r*cos(t), r*sin(t), uniform(self.radius,
+                self.domain_length - self.radius)]
 
 
-    def _random_points_sphere(self):
-        """Generate Cartesian coordinates of sphere centers of spheres that are
+    def _random_point_sphere(self):
+        """Generate Cartesian coordinates of sphere center of a sphere that is
         contained entirely within spherical domain with uniform probability.
 
         Returns
@@ -444,11 +443,10 @@ class CloseRandomPack(object):
 
         """
 
-        x = np.random.normal(0, 1, (self.n_spheres, 3))
-        r = np.random.uniform(0, (self.domain_radius - self.radius)**3,
-                              self.n_spheres)**(1/3)
-
-        return x * (r/np.sum(x**2, axis=1)**.5)[:, np.newaxis]
+        x = (gauss(0, 1), gauss(0, 1), gauss(0, 1))
+	r = (uniform(0, (self.domain_radius - self.radius)**3)**(1/3) /
+             (x[0]**2 + x[1]**2 + x[2]**2)**.5)
+        return [r*i for i in x]
 
 
     def _add_rod(self, d, i, j):
@@ -861,6 +859,44 @@ class CloseRandomPack(object):
         return list(itertools.product(*({int(j) for j in k} for k in r)))
 
 
+    def _initialize_spheres(self):
+        """Randomly place all spheres in domain such that they are not
+        overlapping
+
+        Returns
+        -------
+        spheres : list
+            Cartesian coordinates of all spheres in the domain.
+        """
+
+        random.seed(self.seed)
+
+        sqdiameter = self.diameter**2
+
+        for i in range(self.n_spheres):
+
+            # Randomly choose position of sphere center within the domain and
+            # continue sampling new center coordinates as long as there are any
+            # overlaps
+            while True:
+               p = self.random_point()
+               idx = self.cell_index(i)
+               if any((p[0]-q[0])**2 + (p[1]-q[1])**2 + (p[2]-q[2])**2 < sqdiameter
+                      for q in [self.spheres[j] for j in self.mesh[idx]]):
+                   continue
+               else:
+                   break
+            self.spheres.append(p)
+
+            # Determine which lattice cells are within one diameter of sphere's
+            # center and add this sphere to the list of spheres in those cells
+            for idx in self.cell_list(i, self.diameter):
+                self.mesh[idx].add(i)
+                self.mesh_map[i].add(idx)
+
+        self.spheres = np.array(self.spheres)
+
+
     def pack(self):
         """Randomly place all spheres in domain such that they are not
         overlapping
@@ -872,17 +908,10 @@ class CloseRandomPack(object):
 
         """
 
-        np.random.seed(self.seed)
-
 	# TODO: Generate non-overlapping spheres for some initial inner radius
 	# threshold (using random sequential pack)
         # Randomly choose position of sphere centers within the domain
-        self.spheres = self.random_points()
-
-        for i in range(self.n_spheres):
-            for idx in self.cell_list(i, self.diameter):
-                self.mesh[idx].add(i)
-                self.mesh_map[i].add(idx)
+        self._initialize_spheres()
 
         while True:
 
