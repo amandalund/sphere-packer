@@ -3,7 +3,7 @@ import numpy as np
 import itertools
 import scipy.spatial
 import heapq
-from heapq import *
+from heapq import heappush, heappop
 from scipy.spatial.distance import cdist
 from collections import defaultdict
 from math import pi, floor, log10
@@ -71,6 +71,8 @@ class CloseRandomPack(object):
         Volume of each sphere
     domain_volume : float
         Volume of domain
+    diameter : float
+        Final diameter of spheres
     inner_diameter : float
         Inner diameter of spheres, defined as minimum center-to-center distance
         between any two spheres
@@ -88,18 +90,27 @@ class CloseRandomPack(object):
     rods : list, shape = [n_rods, 3]
 	List of rods arranged in a heap where each element contains the
         distance between the sphere centers and the indices of the two spheres
-    mapping : dict
+    rods_map : dict
 	Mapping of sphere ids to rods. Each key in the dict is the id of a
         sphere that is in the rod list, and the value is the id of its nearest
 	neighbor and the rod that contains them. The dict is used to find rods
 	in the priority queue and to mark removed rods so rods can be "removed"
         without breaking the heap structure invariant.
+    mesh : dict
+        Each key is the index of a lattice cell. The value is a set containing
+        the sphere ids of any sphere whose center is within one diameter of
+        that cell.
+    mesh_map : dict
+        Each key in the dict is the id of a sphere. The value is a set
+        containing the index of each lattice cell the sphere center is within
+        one diameter of.
 
     """
 
     def __init__(self, radius, geometry='cylinder', domain_length=None,
                  domain_radius=None, n_spheres=None, packing_fraction=None,
                  contraction_rate=None, lattice_dimension=None, seed=1):
+
         # Initialize RandomSequentialPacker class attributes
         self._n_spheres = None
         self._packing_fraction = None
@@ -111,6 +122,7 @@ class CloseRandomPack(object):
         self._lattice_dimension = None
         self._seed = None
         self._cell_length = None
+        self._diameter = None
         self._inner_diameter = None
         self._outer_diameter= None
 
@@ -141,25 +153,41 @@ class CloseRandomPack(object):
         if self.geometry is 'cube':
             self.cell_length = [self.domain_length/i for i in
                                 self.lattice_dimension]
+            # Set domain dependent functions
+            self.random_points = self._random_points_cube
+            self.cell_list = self._cell_list_cube
+            self.cell_index = self._cell_index_cube
+            self.apply_bc = self._apply_bc_cube
         elif self.geometry is 'cylinder':
             self.cell_length = [
                 2*self.domain_radius/self.lattice_dimension[0],
                 2*self.domain_radius/self.lattice_dimension[1],
                 self.domain_length/self.lattice_dimension[2]]
+            # Set domain dependent functions
+            self.random_points = self._random_points_cylinder
+            self.cell_list = self._cell_list_cylinder
+            self.cell_index = self._cell_index_cylinder
+            self.apply_bc = self._apply_bc_cylinder
         elif self.geometry is 'sphere':
             self.cell_length = [2*self.domain_radius/i for i in
                                 self.lattice_dimension]
+            # Set domain dependent functions
+            self.random_points = self._random_points_sphere
+            self.cell_list = self._cell_list_sphere
+            self.cell_index = self._cell_index_sphere
+            self.apply_bc = self._apply_bc_sphere
         if contraction_rate is not None:
             self.contraction_rate = contraction_rate
         else:
-            self.contraction_rate = 1
+            self.contraction_rate = 1/400
         self.seed = seed
+        self.diameter = 2*self.radius
         self.initial_outer_diameter = 2 * (self.domain_volume / 
                                           (self.n_spheres * 4/3 * pi))**(1/3)
         self.outer_diameter = self.initial_outer_diameter
         self.spheres = None
         self.rods = []
-        self.mapping = {}
+        self.rods_map = {}
         self.mesh = defaultdict(set)
         self.mesh_map = defaultdict(set)
 
@@ -215,6 +243,10 @@ class CloseRandomPack(object):
             return (self.domain_length * pi * self.domain_radius**2)
         elif self.geometry is 'sphere':
             return 4/3 * pi * self.domain_radius**3
+
+    @property
+    def diameter(self):
+        return self._diameter
 
     @property
     def inner_diameter(self):
@@ -337,6 +369,10 @@ class CloseRandomPack(object):
     def cell_length(self, cell_length):
         self._cell_length = cell_length
 
+    @diameter.setter
+    def diameter(self, diameter):
+        self._diameter = diameter
+
     @inner_diameter.setter
     def inner_diameter(self, inner_diameter):
         self._inner_diameter = inner_diameter
@@ -420,8 +456,8 @@ class CloseRandomPack(object):
         """
 
         rod = [d, i, j]
-        self.mapping[i] = j, rod
-        self.mapping[j] = i, rod
+        self.rods_map[i] = j, rod
+        self.rods_map[j] = i, rod
         heappush(self.rods, rod)
 
 
@@ -435,9 +471,9 @@ class CloseRandomPack(object):
 
         """
 
-        if i in self.mapping:
-            j, rod = self.mapping.pop(i)
-            del self.mapping[j]
+        if i in self.rods_map:
+            j, rod = self.rods_map.pop(i)
+            del self.rods_map[j]
             rod[1] = None
             rod[2] = None
 
@@ -460,8 +496,8 @@ class CloseRandomPack(object):
         while self.rods:
             d, i, j = heappop(self.rods)
             if i is not None and j is not None:
-                del self.mapping[i]
-                del self.mapping[j]
+                del self.rods_map[i]
+                del self.rods_map[j]
                 return d, i, j
 
 
@@ -503,7 +539,7 @@ class CloseRandomPack(object):
 
         # Clear priority queue and add rods
         del self.rods[:]
-        self.mapping.clear()
+        self.rods_map.clear()
         for d, i, j in r:
             self._add_rod(d, i, j)
 
@@ -531,12 +567,32 @@ class CloseRandomPack(object):
 			       self.contraction_rate / self.n_spheres)
 
 
-    def _repel_spheres_cube(self, i, j, d):
-	"""Move spheres p and q apart according to the following transformation
-        (accounting for reflective boundary conditions on domain):
+    def _update_mesh(self, i):
+	"""Update which lattice cells the sphere is in based on new sphere
+        center coordinates.
 
-            r_i^(n+1) = r_i^(n) + 1/2(d_out^(n+1) - d^(n))
-            r_j^(n+1) = r_j^(n) - 1/2(d_out^(n+1) - d^(n))
+        Parameters
+        ----------
+        i : int
+            Index of sphere in spheres array
+
+        """
+
+        # Determine which lattice cells the sphere is in and remove the
+        # sphere id from those cells
+        for idx in self.mesh_map[i]:
+            self.mesh[idx].remove(i)
+        del self.mesh_map[i]
+
+        # Determine which lattice cells are within one diameter of sphere's
+        # center and add this sphere to the list of spheres in those cells
+        for idx in self._cell_list_cube(i, self.diameter):
+            self.mesh[idx].add(i)
+            self.mesh_map[i].add(idx)
+
+
+    def _apply_bc_cube(self, i, j):
+        """Apply reflective boundary conditions to spheres i and j
 
         Parameters
         ----------
@@ -544,25 +600,8 @@ class CloseRandomPack(object):
             Index of sphere in spheres array
         j : int
             Index of sphere in spheres array
-        d : float
-            distance between centers of spheres i and j
 
         """
-        # Determine which lattice cells the spheres are in and remove the
-        # sphere ids from those cells
-        for idx in self.mesh_map[i]:
-            self.mesh[idx].remove(i)
-        for idx in self.mesh_map[j]:
-            self.mesh[idx].remove(j)
-
-	# Moving each sphere distance 'r' away from the other along the line
-	# joining the sphere centers will ensure their final distance is equal
-	# to the outer diameter
-        r = (self.outer_diameter - d)/2;
-
-        v = (self.spheres[i] - self.spheres[j])/d
-        self.spheres[i] = self.spheres[i] + r*v
-        self.spheres[j] = self.spheres[j] - r*v
 
         a = self.radius
         b = self.domain_length - a
@@ -578,20 +617,9 @@ class CloseRandomPack(object):
             elif self.spheres[j][k] > b:
                 self.spheres[j][k] = b
 
-        # Determine which lattice cells are within one diameter of sphere's
-        # center and add this sphere to the list of spheres in those cells
-        for idx in self._cell_list_cube(i, 2*self.radius):
-            self.mesh[idx].add(i)
-        for idx in self._cell_list_cube(j, 2*self.radius):
-            self.mesh[idx].add(j)
 
-
-    def _repel_spheres_cylinder(self, i, j, d):
-	"""Move spheres p and q apart according to the following transformation
-        (accounting for reflective boundary conditions on domain):
-
-            r_i^(n+1) = r_i^(n) + 1/2(d_out^(n+1) - d^(n))
-            r_j^(n+1) = r_j^(n) - 1/2(d_out^(n+1) - d^(n))
+    def _apply_bc_cylinder(self, i, j):
+        """Apply reflective boundary conditions to spheres i and j
 
         Parameters
         ----------
@@ -599,19 +627,8 @@ class CloseRandomPack(object):
             Index of sphere in spheres array
         j : int
             Index of sphere in spheres array
-        d : float
-            distance between centers of spheres i and j
 
         """
-
-	# Moving each sphere distance 'r' away from the other along the line
-	# joining the sphere centers will ensure their final distance is equal
-	# to the outer diameter
-        r = (self.outer_diameter - d)/2;
-
-        v = (self.spheres[i] - self.spheres[j])/d
-        self.spheres[i] = self.spheres[i] + r*v
-        self.spheres[j] = self.spheres[j] - r*v
 
         a = (self.radius-self.domain_radius,
              self.radius-self.domain_radius, self.radius)
@@ -629,8 +646,34 @@ class CloseRandomPack(object):
             elif self.spheres[j][k] > b[k]:
                 self.spheres[j][k] = b[k]
 
+    def _apply_bc_sphere(self, i, j):
+        """Apply reflective boundary conditions to spheres i and j
 
-    def _repel_spheres_sphere(self, i, j, d):
+        Parameters
+        ----------
+        i : int
+            Index of sphere in spheres array
+        j : int
+            Index of sphere in spheres array
+
+        """
+
+        a = self.radius - self.domain_radius
+        b = self.domain_radius - self.radius
+
+        # Apply reflective boundary conditions
+        for k in range(3):
+            if self.spheres[i][k] < a:
+                self.spheres[i][k] = a
+            elif self.spheres[i][k] > b:
+                self.spheres[i][k] = b
+            if self.spheres[j][k] < a:
+                self.spheres[j][k] = a
+            elif self.spheres[j][k] > b:
+                self.spheres[j][k] = b
+
+
+    def _repel_spheres(self, i, j, d):
 	"""Move spheres p and q apart according to the following transformation
         (accounting for reflective boundary conditions on domain):
 
@@ -657,19 +700,11 @@ class CloseRandomPack(object):
         self.spheres[i] = self.spheres[i] + r*v
         self.spheres[j] = self.spheres[j] - r*v
 
-        a = self.radius - self.domain_radius
-        b = self.domain_radius - self.radius
-
         # Apply reflective boundary conditions
-        for k in range(3):
-            if self.spheres[i][k] < a:
-                self.spheres[i][k] = a
-            elif self.spheres[i][k] > b:
-                self.spheres[i][k] = b
-            if self.spheres[j][k] < a:
-                self.spheres[j][k] = a
-            elif self.spheres[j][k] > b:
-                self.spheres[j][k] = b
+        self.apply_bc(i, j)
+
+        self._update_mesh(i)
+        self._update_mesh(j)
 
 
     def _nearest(self, i):
@@ -691,7 +726,7 @@ class CloseRandomPack(object):
         # Need the second nearest neighbor of i since the nearest neighbor
         # will be itself. Using argpartition, the k-th nearest neighbor is
         # placed at index k.
-        idx = list(self.mesh[self._cell_index_cube(i)])
+        idx = list(self.mesh[self.cell_index(i)])
         dists = cdist([self.spheres[i]], self.spheres[idx])[0]
         try:
             j = dists.argpartition(1)[1]
@@ -766,9 +801,9 @@ class CloseRandomPack(object):
 
         """
 
-        return tuple(int((self.spheres[i][0] + self.domain_radius)/self.cell_length[0]),
+        return tuple([int((self.spheres[i][0] + self.domain_radius)/self.cell_length[0]),
                      int((self.spheres[i][1] + self.domain_radius)/self.cell_length[1]),
-                     int(self.spheres[i][2]/self.cell_length[2]))
+                     int(self.spheres[i][2]/self.cell_length[2])])
 
 
     def _cell_index_sphere(self, i):
@@ -888,29 +923,16 @@ class CloseRandomPack(object):
 
         np.random.seed(self.seed)
 
-        diameter = 2*self.radius
-        sqdiameter = diameter**2
-
-        # Set domain dependent functions
-        if self.geometry is 'cube':
-            random_points = self._random_points_cube
-            repel_spheres = self._repel_spheres_cube
-        elif self.geometry is 'cylinder':
-            random_points = self._random_points_cylinder
-            repel_spheres = self._repel_spheres_cylinder
-        elif self.geometry is 'sphere':
-            random_points = self._random_points_sphere
-            repel_spheres = self._repel_spheres_sphere
-
         # TODO: Whether to use np random or built in. Generate non-overlapping
         # spheres for some initial inner radius threshold (using random
         # sequential pack)
         # Randomly choose position of sphere centers within the domain
-        self.spheres = random_points()
+        self.spheres = self.random_points()
 
         for i in range(self.n_spheres):
-            for idx in self._cell_list_cube(i, diameter):
+            for idx in self.cell_list(i, self.diameter):
                 self.mesh[idx].add(i)
+                self.mesh_map[i].add(idx)
 
         while True:
 
@@ -919,7 +941,7 @@ class CloseRandomPack(object):
             # the list if q has no closer neighbors than p.
             self._create_rod_list()
 
-            if self.inner_diameter >= diameter:
+            if self.inner_diameter >= self.diameter:
                 break
 
             while True:
@@ -932,12 +954,12 @@ class CloseRandomPack(object):
 
                 # Move spheres the two closest spheres apart so they are separated
                 # by one diameter
-                repel_spheres(i, j, d)
+                self._repel_spheres(i, j, d)
 
                 # Update rod list with new nearest neighbors
                 self._update_rod_list(i, j)
 
-                if self.inner_diameter >= diameter or not self.rods:
+                if self.inner_diameter >= self.diameter or not self.rods:
                     break
 
         print "Inner diameter: {}".format(self.inner_diameter)
