@@ -131,14 +131,18 @@ class CloseRandomPack(object):
         self.geometry = geometry
         self.domain_length = domain_length
         self.domain_radius = domain_radius
+
         if ((n_spheres is None and packing_fraction is None) or
            (n_spheres is not None and packing_fraction is not None)):
             raise ValueError("Exactly one of 'n_spheres' and 'packing_fraction' "
                              "must be specified.")
+
         if n_spheres is not None:
             self.n_spheres = n_spheres
+
         if packing_fraction is not None:
             self.packing_fraction = packing_fraction
+
         if lattice_dimension is None:
             n = int(self.domain_length/(4*self.radius))
             m = int(self.domain_radius/(2*self.radius))
@@ -150,36 +154,42 @@ class CloseRandomPack(object):
                 self.lattice_dimension = [m, m, m]
         else:
             self.lattice_dimension = lattice_dimension
+
         if self.geometry is 'cube':
             self.cell_length = [self.domain_length/i for i in
                                 self.lattice_dimension]
-            # Set domain dependent functions
             self.random_points = self._random_points_cube
             self.cell_list = self._cell_list_cube
             self.cell_index = self._cell_index_cube
-            self.apply_bc = self._apply_bc_cube
+            self.bc_min = 3*(self.radius,)
+            self.bc_max = 3*(self.domain_length-self.radius,)
         elif self.geometry is 'cylinder':
             self.cell_length = [
                 2*self.domain_radius/self.lattice_dimension[0],
                 2*self.domain_radius/self.lattice_dimension[1],
                 self.domain_length/self.lattice_dimension[2]]
-            # Set domain dependent functions
             self.random_points = self._random_points_cylinder
             self.cell_list = self._cell_list_cylinder
             self.cell_index = self._cell_index_cylinder
-            self.apply_bc = self._apply_bc_cylinder
+            self.bc_min = (self.radius-self.domain_radius,
+                           self.radius-self.domain_radius, self.radius)
+	    self.bc_max = (self.domain_radius-self.radius,
+			   self.domain_radius-self.radius,
+                           self.domain_length-self.radius)
         elif self.geometry is 'sphere':
             self.cell_length = [2*self.domain_radius/i for i in
                                 self.lattice_dimension]
-            # Set domain dependent functions
             self.random_points = self._random_points_sphere
             self.cell_list = self._cell_list_sphere
             self.cell_index = self._cell_index_sphere
-            self.apply_bc = self._apply_bc_sphere
+            self.bc_min = 3*(self.radius-self.domain_radius,)
+            self.bc_max = 3*(self.domain_radius-self.radius,)
+
         if contraction_rate is not None:
             self.contraction_rate = contraction_rate
         else:
             self.contraction_rate = 1/400
+
         self.seed = seed
         self.diameter = 2*self.radius
         self.initial_outer_diameter = 2 * (self.domain_volume / 
@@ -591,7 +601,7 @@ class CloseRandomPack(object):
             self.mesh_map[i].add(idx)
 
 
-    def _apply_bc_cube(self, i, j):
+    def _apply_boundary_conditions(self, i, j):
         """Apply reflective boundary conditions to spheres i and j
 
         Parameters
@@ -603,74 +613,15 @@ class CloseRandomPack(object):
 
         """
 
-        a = self.radius
-        b = self.domain_length - a
-
-        # Apply reflective boundary conditions
         for k in range(3):
-            if self.spheres[i][k] < a:
-                self.spheres[i][k] = a
-            elif self.spheres[i][k] > b:
-                self.spheres[i][k] = b
-            if self.spheres[j][k] < a:
-                self.spheres[j][k] = a
-            elif self.spheres[j][k] > b:
-                self.spheres[j][k] = b
-
-
-    def _apply_bc_cylinder(self, i, j):
-        """Apply reflective boundary conditions to spheres i and j
-
-        Parameters
-        ----------
-        i : int
-            Index of sphere in spheres array
-        j : int
-            Index of sphere in spheres array
-
-        """
-
-        a = (self.radius-self.domain_radius,
-             self.radius-self.domain_radius, self.radius)
-        b = (self.domain_radius-self.radius,
-             self.domain_radius-self.radius, self.domain_length-self.radius)
-
-        # Apply reflective boundary conditions
-        for k in range(3):
-            if self.spheres[i][k] < a[k]:
-                self.spheres[i][k] = a[k]
-            elif self.spheres[i][k] > b[k]:
-                self.spheres[i][k] = b[k]
-            if self.spheres[j][k] < a[k]:
-                self.spheres[j][k] = a[k]
-            elif self.spheres[j][k] > b[k]:
-                self.spheres[j][k] = b[k]
-
-    def _apply_bc_sphere(self, i, j):
-        """Apply reflective boundary conditions to spheres i and j
-
-        Parameters
-        ----------
-        i : int
-            Index of sphere in spheres array
-        j : int
-            Index of sphere in spheres array
-
-        """
-
-        a = self.radius - self.domain_radius
-        b = self.domain_radius - self.radius
-
-        # Apply reflective boundary conditions
-        for k in range(3):
-            if self.spheres[i][k] < a:
-                self.spheres[i][k] = a
-            elif self.spheres[i][k] > b:
-                self.spheres[i][k] = b
-            if self.spheres[j][k] < a:
-                self.spheres[j][k] = a
-            elif self.spheres[j][k] > b:
-                self.spheres[j][k] = b
+            if self.spheres[i][k] < self.bc_min[k]:
+                self.spheres[i][k] = self.bc_min[k]
+            elif self.spheres[i][k] > self.bc_max[k]:
+                self.spheres[i][k] = self.bc_max[k]
+            if self.spheres[j][k] < self.bc_min[k]:
+                self.spheres[j][k] = self.bc_min[k]
+            elif self.spheres[j][k] > self.bc_max[k]:
+                self.spheres[j][k] = self.bc_max[k]
 
 
     def _repel_spheres(self, i, j, d):
@@ -701,7 +652,7 @@ class CloseRandomPack(object):
         self.spheres[j] = self.spheres[j] - r*v
 
         # Apply reflective boundary conditions
-        self.apply_bc(i, j)
+        self._apply_boundary_conditions(i, j)
 
         self._update_mesh(i)
         self._update_mesh(j)
@@ -923,9 +874,8 @@ class CloseRandomPack(object):
 
         np.random.seed(self.seed)
 
-        # TODO: Whether to use np random or built in. Generate non-overlapping
-        # spheres for some initial inner radius threshold (using random
-        # sequential pack)
+	# TODO: Generate non-overlapping spheres for some initial inner radius
+	# threshold (using random sequential pack)
         # Randomly choose position of sphere centers within the domain
         self.spheres = self.random_points()
 
