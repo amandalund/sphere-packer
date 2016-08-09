@@ -197,7 +197,7 @@ class CloseRandomPack(object):
         self.initial_outer_diameter = 2 * (self.domain_volume / 
                                           (self.n_spheres * 4/3 * pi))**(1/3)
         self.outer_diameter = self.initial_outer_diameter
-        self.initial_packing_fraction = 0.33
+        self.initial_packing_fraction = 0.3
         if self.initial_packing_fraction > self.packing_fraction:
             self.initial_packing_fraction = self.packing_fraction
         self.spheres = []
@@ -597,7 +597,7 @@ class CloseRandomPack(object):
 
         # Determine which lattice cells are within one diameter of sphere's
         # center and add this sphere to the list of spheres in those cells
-        for idx in self._cell_list_cube(i, self.diameter):
+        for idx in self._cell_list_cube(self.spheres[i], self.diameter):
             self.mesh[idx].add(i)
             self.mesh_map[i].add(idx)
 
@@ -778,14 +778,14 @@ class CloseRandomPack(object):
                      for j in range(3))
 
 
-    def _cell_list_cube(self, i, d):
+    def _cell_list_cube(self, p, d):
         """Return the indices of all cells within the given distance of the
         point.
 
         Parameters
         ----------
-        i : int
-            Index of sphere in spheres array
+        p : list
+            Cartesian coordinates of sphere center
         d : float
 	    Find all lattice cells that are within a radius of length 'd' from
             the sphere center
@@ -797,11 +797,10 @@ class CloseRandomPack(object):
 
         """
 
-        r = [[a/self.cell_length[j] for a in
-             [self.spheres[i][j]-d, self.spheres[i][j], self.spheres[i][j]+d]
-             if a > 0 and a < self.domain_length] for j in range(3)]
+        r = [[a/self.cell_length[i] for a in [p[i]-d, p[i], p[i]+d]
+             if a > 0 and a < self.domain_length] for i in range(3)]
 
-        return list(itertools.product(*({int(j) for j in k} for k in r)))
+        return list(itertools.product(*({int(i) for i in j} for j in r)))
 
 
     def _cell_list_cylinder(self, i, d):
@@ -912,6 +911,7 @@ class CloseRandomPack(object):
         self.radius = radius
 
         sqdiameter = self.diameter**2
+        self.mesh = defaultdict(list)
 
         for i in range(self.n_spheres):
 
@@ -922,7 +922,7 @@ class CloseRandomPack(object):
                p = self.random_point()
                idx = self.cell_index(p)
                if any((p[0]-q[0])**2 + (p[1]-q[1])**2 + (p[2]-q[2])**2 < sqdiameter
-                      for q in [self.spheres[j] for j in self.mesh[idx]]):
+                      for q in self.mesh[idx]):
                    continue
                else:
                    break
@@ -930,8 +930,8 @@ class CloseRandomPack(object):
 
             # Determine which lattice cells are within one diameter of sphere's
             # center and add this sphere to the list of spheres in those cells
-            for idx in self.cell_list(i, self.diameter):
-                self.mesh[idx].add(i)
+            for idx in self.cell_list(p, self.diameter):
+                self.mesh[idx].append(p)
 
         self.spheres = np.array(self.spheres)
 
@@ -944,7 +944,7 @@ class CloseRandomPack(object):
         # center and add this sphere to the list of spheres in those cells
         self.mesh = defaultdict(set)
         for i in range(self.n_spheres):
-            for idx in self.cell_list(i, self.diameter):
+            for idx in self.cell_list(self.spheres[i], self.diameter):
                 self.mesh[idx].add(i)
                 self.mesh_map[i].add(idx)
 
