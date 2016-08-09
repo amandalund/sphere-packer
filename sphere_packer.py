@@ -38,6 +38,9 @@ class CloseRandomPack(object):
     packing_fraction : float
         Packing fraction of spheres. Exactly one of 'spheres' and
         'packing_fraction' should be specified
+    initial_packing_fraction : float
+	Initial packing fraction of spheres used in random sequential pack that
+        initializes the configuration of spheres in the domain
     contraction_rate : float
         Contraction rate of outer diameter
     lattice_dimension : array_like, optional
@@ -61,6 +64,9 @@ class CloseRandomPack(object):
     packing_fraction : float
         Final desired packing fraction of spheres. Exactly one of 'spheres' and
         'packing_fraction' should be specified
+    initial_packing_fraction : float
+	Initial packing fraction of spheres used in random sequential pack that
+        initializes the configuration of spheres in the domain
     contraction_rate : float
         Contraction rate of outer diameter
     lattice_dimension : list
@@ -111,11 +117,13 @@ class CloseRandomPack(object):
 
     def __init__(self, radius, geometry='cylinder', domain_length=None,
                  domain_radius=None, n_spheres=None, packing_fraction=None,
-                 contraction_rate=None, lattice_dimension=None, seed=1):
+		 initial_packing_fraction=0.3, contraction_rate=1/400,
+                 lattice_dimension=None, seed=1):
 
         # Initialize RandomSequentialPacker class attributes
         self._n_spheres = None
         self._packing_fraction = None
+        self._initial_packing_fraction = None
         self._radius = None
         self._geometry = None
         self._domain_length = None
@@ -133,18 +141,15 @@ class CloseRandomPack(object):
         self.geometry = geometry
         self.domain_length = domain_length
         self.domain_radius = domain_radius
-
         if ((n_spheres is None and packing_fraction is None) or
            (n_spheres is not None and packing_fraction is not None)):
             raise ValueError("Exactly one of 'n_spheres' and 'packing_fraction' "
                              "must be specified.")
-
         if n_spheres is not None:
             self.n_spheres = n_spheres
-
         if packing_fraction is not None:
             self.packing_fraction = packing_fraction
-
+        self.initial_packing_fraction = initial_packing_fraction
         if lattice_dimension is None:
             n = int(self.domain_length/(4*self.radius))
             m = int(self.domain_radius/(2*self.radius))
@@ -156,16 +161,12 @@ class CloseRandomPack(object):
                 self.lattice_dimension = [m, m, m]
         else:
             self.lattice_dimension = lattice_dimension
-
-        if self.geometry is 'cube':
+        if geometry is 'cube':
             self.cell_length = [self.domain_length/i for i in
                                 self.lattice_dimension]
             self.bc_min = 3*(self.radius,)
             self.bc_max = 3*(self.domain_length-self.radius,)
-            self.random_point = self._random_point_cube
-            self.cell_list = self._cell_list_cube
-            self.cell_index = self._cell_index_cube
-        elif self.geometry is 'cylinder':
+        elif geometry is 'cylinder':
             self.cell_length = [
                 2*self.domain_radius/self.lattice_dimension[0],
                 2*self.domain_radius/self.lattice_dimension[1],
@@ -175,31 +176,17 @@ class CloseRandomPack(object):
 	    self.bc_max = (self.domain_radius-self.radius,
 			   self.domain_radius-self.radius,
                            self.domain_length-self.radius)
-            self.random_point = self._random_point_cylinder
-            self.cell_list = self._cell_list_cylinder
-            self.cell_index = self._cell_index_cylinder
-        elif self.geometry is 'sphere':
+        elif geometry is 'sphere':
             self.cell_length = [2*self.domain_radius/i for i in
                                 self.lattice_dimension]
             self.bc_min = 3*(self.radius-self.domain_radius,)
             self.bc_max = 3*(self.domain_radius-self.radius,)
-            self.random_point = self._random_point_sphere
-            self.cell_list = self._cell_list_sphere
-            self.cell_index = self._cell_index_sphere
-
-        if contraction_rate is not None:
-            self.contraction_rate = contraction_rate
-        else:
-            self.contraction_rate = 1/400
-
+        self.contraction_rate = contraction_rate
         self.seed = seed
         self.diameter = 2*self.radius
         self.initial_outer_diameter = 2 * (self.domain_volume / 
                                           (self.n_spheres * 4/3 * pi))**(1/3)
         self.outer_diameter = self.initial_outer_diameter
-        self.initial_packing_fraction = 0.3
-        if self.initial_packing_fraction > self.packing_fraction:
-            self.initial_packing_fraction = self.packing_fraction
         self.spheres = []
         self.rods = []
         self.rods_map = {}
@@ -229,6 +216,10 @@ class CloseRandomPack(object):
     @property
     def packing_fraction(self):
         return self._packing_fraction
+
+    @property
+    def initial_packing_fraction(self):
+        return self._initial_packing_fraction
 
     @property
     def contraction_rate(self):
@@ -297,6 +288,18 @@ class CloseRandomPack(object):
             raise ValueError('Unable to set geometry to "{}". Only "cube", '
                              '"cylinder", and "sphere" are '
                              'supported."'.format(geometry))
+        if geometry is 'cube':
+            self.random_point = self._random_point_cube
+            self.cell_list = self._cell_list_cube
+            self.cell_index = self._cell_index_cube
+        elif geometry is 'cylinder':
+            self.random_point = self._random_point_cylinder
+            self.cell_list = self._cell_list_cylinder
+            self.cell_index = self._cell_index_cylinder
+        elif geometry is 'sphere':
+            self.random_point = self._random_point_sphere
+            self.cell_list = self._cell_list_sphere
+            self.cell_index = self._cell_index_sphere
         self._geometry = geometry
 
     @domain_length.setter
@@ -332,8 +335,7 @@ class CloseRandomPack(object):
     def packing_fraction(self, packing_fraction):
         if packing_fraction < 0:
             raise ValueError('Unable to set packing fraction to {}: packing '
-                             'fraction must be ' \
-                             'positive.'.format(packing_fraction))
+                             'fraction must be positive.'.format(packing_fraction))
         if packing_fraction >= 0.64:
             raise ValueError('Packing fraction of {} is greater than the '
                              'packing fraction limit for close random '
@@ -343,6 +345,23 @@ class CloseRandomPack(object):
             raise ValueError('Unable to set "n_spheres" to {}: number of '
                              'n_spheres must be positive.'.format(n_spheres))
         self.n_spheres = n_spheres
+
+    @initial_packing_fraction.setter
+    def initial_packing_fraction(self, initial_packing_fraction):
+        if initial_packing_fraction < 0:
+	    raise ValueError('Unable to set initial packing fraction to {}: '
+                             'initial packing fraction must be '
+                             'positive.'.format(initial_packing_fraction))
+        if initial_packing_fraction >= 0.38:
+            raise ValueError('Initial packing fraction of {} is greater than the '
+                             'packing fraction limit for random sequential'
+                             'packing (0.38)'.format(initial_packing_fraction))
+        if initial_packing_fraction > self.packing_fraction:
+            if self.packing_fraction > 0.3:
+                initial_packing_fraction = 0.3
+            else:
+                initial_packing_fraction = self.packing_fraction
+        self._initial_packing_fraction = initial_packing_fraction
 
     @contraction_rate.setter
     def contraction_rate(self, contraction_rate):
@@ -432,7 +451,7 @@ class CloseRandomPack(object):
         r = uniform(0, (self.domain_radius - self.radius)**2)**.5
         t = uniform(0, 2*pi)
         return [r*cos(t), r*sin(t), uniform(self.radius,
-                self.domain_length - self.radius)]
+                                            self.domain_length - self.radius)]
 
 
     def _random_point_sphere(self):
@@ -718,7 +737,7 @@ class CloseRandomPack(object):
             self.inner_diameter = self.rods[0][0]
 
 
-    def _cell_index_cube(self, p):
+    def _cell_index_cube(self, p, cell_length=None):
         """Calculate the index of the lattice cell the given sphere center
         falls in
 
@@ -734,17 +753,20 @@ class CloseRandomPack(object):
 
         """
 
-        return tuple(int(p[i]/self.cell_length[i]) for i in range(3))
+        if cell_length is None:
+            cell_length = self.cell_length
+
+        return tuple(int(p[i]/cell_length[i]) for i in range(3))
 
 
-    def _cell_index_cylinder(self, i):
+    def _cell_index_cylinder(self, p, cell_length=None):
         """Calculate the index of the lattice cell the given sphere center
         falls in
 
         Parameters
         ----------
-        i : int
-            Index of sphere in spheres array
+        p : list
+            Cartesian coordinates of sphere center
 
         Returns
         -------
@@ -753,19 +775,22 @@ class CloseRandomPack(object):
 
         """
 
-        return tuple([int((self.spheres[i][0] + self.domain_radius)/self.cell_length[0]),
-                     int((self.spheres[i][1] + self.domain_radius)/self.cell_length[1]),
-                     int(self.spheres[i][2]/self.cell_length[2])])
+        if cell_length is None:
+            cell_length = self.cell_length
+
+        return tuple([int((p[0] + self.domain_radius)/cell_length[0]),
+                     int((p[1] + self.domain_radius)/cell_length[1]),
+                     int(p[2]/cell_length[2])])
 
 
-    def _cell_index_sphere(self, i):
+    def _cell_index_sphere(self, p, cell_length=None):
         """Calculate the index of the lattice cell the given sphere center
         falls in
 
         Parameters
         ----------
-        i : int
-            Index of sphere in spheres array
+        p : list
+            Cartesian coordinates of sphere center
 
         Returns
         -------
@@ -774,11 +799,14 @@ class CloseRandomPack(object):
 
         """
 
-        return tuple(int((self.spheres[i][j] + self.domain_radius)/self.cell_length[j])
-                     for j in range(3))
+        if cell_length is None:
+            cell_length = self.cell_length
+
+        return tuple(int((p[i] + self.domain_radius)/cell_length[i])
+                     for i in range(3))
 
 
-    def _cell_list_cube(self, p, d):
+    def _cell_list_cube(self, p, d, cell_length=None):
         """Return the indices of all cells within the given distance of the
         point.
 
@@ -797,20 +825,23 @@ class CloseRandomPack(object):
 
         """
 
-        r = [[a/self.cell_length[i] for a in [p[i]-d, p[i], p[i]+d]
-             if a > 0 and a < self.domain_length] for i in range(3)]
+        if cell_length is None:
+            cell_length = self.cell_length
+
+        r = [[a/cell_length[i] for a in [p[i]-d, p[i], p[i]+d] if a > 0 and
+             a < self.domain_length] for i in range(3)]
 
         return list(itertools.product(*({int(i) for i in j} for j in r)))
 
 
-    def _cell_list_cylinder(self, i, d):
+    def _cell_list_cylinder(self, p, d, cell_length=None):
         """Return the indices of all cells within the given distance of the
         point.
 
         Parameters
         ----------
-        i : int
-            Index of sphere in spheres array
+        p : list
+            Cartesian coordinates of sphere center
         d : float
 	    Find all lattice cells that are within a radius of length 'd' from
             the sphere center
@@ -822,26 +853,27 @@ class CloseRandomPack(object):
 
         """
 
-	x,y = [[(a + self.domain_radius)/self.cell_length[j] for a in
-	       [self.spheres[i][j]-d, self.spheres[i][j], self.spheres[i][j]+d]
-               if a > -self.domain_radius and a < self.domain_radius]
-               for j in range(2)]
+        if cell_length is None:
+            cell_length = self.cell_length
 
-	z = [a/self.cell_length[2] for a in
-             [self.spheres[i][2]-d, self.spheres[i][2], self.spheres[i][2]+d]
+	x,y = [[(a + self.domain_radius)/cell_length[i] for a in
+               [p[i]-d, p[i], p[i]+d] if a > -self.domain_radius and
+               a < self.domain_radius] for i in range(2)]
+
+	z = [a/cell_length[2] for a in [p[2]-d, p[2], p[2]+d]
              if a > 0 and a < self.domain_length]
 
-        return list(itertools.product(*({int(j) for j in k} for k in (x,y,z))))
+        return list(itertools.product(*({int(i) for i in j} for j in (x,y,z))))
 
 
-    def _cell_list_sphere(self, i, d):
+    def _cell_list_sphere(self, p, d, cell_length=None):
         """Return the indices of all cells within the given distance of the
         point.
 
         Parameters
         ----------
-        i : int
-            Index of sphere in spheres array
+        p : list
+            Cartesian coordinates of sphere center
         d : float
 	    Find all lattice cells that are within a radius of length 'd' from
             the sphere center
@@ -853,40 +885,14 @@ class CloseRandomPack(object):
 
         """
 
-        r = [[(a + self.domain_radius)/self.cell_length[j] for a in
-	     [self.spheres[i][j]-d, self.spheres[i][j], self.spheres[i][j]+d]
-             if a > -self.domain_radius and a < self.domain_radius]
-             for j in range(3)]
+        if cell_length is None:
+            cell_length = self.cell_length
 
-        return list(itertools.product(*({int(j) for j in k} for k in r)))
+        r = [[(a + self.domain_radius)/cell_length[i] for a in
+	     [p[i]-d, p[i], p[i]+d] if a > -self.domain_radius and
+             a < self.domain_radius] for i in range(3)]
 
-
-    def _set_initial_parameters(self):
-        """Set parameters for initial random sequential packing of spheres.
-
-        """
-
-	self.radius = (3 * self.initial_packing_fraction * self.domain_volume /
-                       (4 * pi * self.n_spheres))**(1/3)
-
-        self.diameter = 2*self.radius
-
-        n = int(self.domain_length/(4*self.radius))
-        m = int(self.domain_radius/(2*self.radius))
-        if self.geometry is 'cube':
-            self.lattice_dimension = [n, n, n]
-            self.cell_length = [self.domain_length/i for i in
-                                self.lattice_dimension]
-        elif self.geometry is 'cylinder':
-            self.lattice_dimension = [m, m, n]
-            self.cell_length = [
-                2*self.domain_radius/self.lattice_dimension[0],
-                2*self.domain_radius/self.lattice_dimension[1],
-                self.domain_length/self.lattice_dimension[2]]
-        elif self.geometry is 'sphere':
-            self.lattice_dimension = [m, m, m]
-            self.cell_length = [2*self.domain_radius/i for i in
-                                self.lattice_dimension]
+        return list(itertools.product(*({int(i) for i in j} for j in r)))
 
 
     def _initialize_spheres(self):
@@ -898,20 +904,28 @@ class CloseRandomPack(object):
 
         """
 
-        # Save the parameters we want to use for the close random pack
-        radius = self.radius
-        diameter = self.diameter
-        lattice_dimension = self.lattice_dimension
-        cell_length = self.cell_length
+        #Set parameters for initial random sequential packing of spheres.
+	radius = (3 * self.initial_packing_fraction * self.domain_volume /
+                  (4 * pi * self.n_spheres))**(1/3)
+        diameter = 2*radius
+        sqdiameter = diameter**2
 
-        self._set_initial_parameters()
+        n = int(self.domain_length/(4*radius))
+        m = int(self.domain_radius/(2*radius))
+        if self.geometry is 'cube':
+            lattice_dimension = [n, n, n]
+            cell_length = [self.domain_length/i for i in lattice_dimension]
+        elif self.geometry is 'cylinder':
+            lattice_dimension = [m, m, n]
+            cell_length = [2*self.domain_radius/lattice_dimension[0],
+                           2*self.domain_radius/lattice_dimension[1],
+                           self.domain_length/lattice_dimension[2]]
+        elif self.geometry is 'sphere':
+            lattice_dimension = [m, m, m]
+	    cell_length = [2*self.domain_radius/i for i in lattice_dimension]
 
-	# Need the radius to be the final radius so that random points are
-        # selected far enough from boundary
-        self.radius = radius
 
-        sqdiameter = self.diameter**2
-        self.mesh = defaultdict(list)
+        mesh = defaultdict(list)
 
         for i in range(self.n_spheres):
 
@@ -920,9 +934,9 @@ class CloseRandomPack(object):
             # overlaps
             while True:
                p = self.random_point()
-               idx = self.cell_index(p)
+               idx = self.cell_index(p, cell_length)
                if any((p[0]-q[0])**2 + (p[1]-q[1])**2 + (p[2]-q[2])**2 < sqdiameter
-                      for q in self.mesh[idx]):
+                      for q in mesh[idx]):
                    continue
                else:
                    break
@@ -930,23 +944,12 @@ class CloseRandomPack(object):
 
             # Determine which lattice cells are within one diameter of sphere's
             # center and add this sphere to the list of spheres in those cells
-            for idx in self.cell_list(p, self.diameter):
-                self.mesh[idx].append(p)
+            for idx in self.cell_list(p, diameter, cell_length):
+                mesh[idx].append(p)
 
+        mesh.clear()
         self.spheres = np.array(self.spheres)
 
-        # Reset parameters
-        self.diameter = diameter
-        self.lattice_dimension = lattice_dimension
-        self.cell_length = cell_length
-
-        # Determine which lattice cells are within one diameter of sphere's
-        # center and add this sphere to the list of spheres in those cells
-        self.mesh = defaultdict(set)
-        for i in range(self.n_spheres):
-            for idx in self.cell_list(self.spheres[i], self.diameter):
-                self.mesh[idx].add(i)
-                self.mesh_map[i].add(idx)
 
 
     def pack(self):
@@ -968,6 +971,13 @@ class CloseRandomPack(object):
 
         if self.initial_packing_fraction == self.packing_fraction:
             return self.spheres
+
+        # Determine which lattice cells are within one diameter of sphere's
+        # center and add this sphere to the list of spheres in those cells
+        for i in range(self.n_spheres):
+            for idx in self.cell_list(self.spheres[i], self.diameter):
+                self.mesh[idx].add(i)
+                self.mesh_map[i].add(idx)
 
         while True:
 
@@ -996,10 +1006,5 @@ class CloseRandomPack(object):
 
                 if self.inner_diameter >= self.diameter or not self.rods:
                     break
-
-        print "Inner diameter: {}".format(self.inner_diameter)
-        print "Outer diameter: {}".format(self.outer_diameter)
-        print "Inner packing fraction: {}".format(self.inner_packing_fraction)
-        print "Outer packing fraction: {}".format(self.outer_packing_fraction)
 
         return self.spheres
