@@ -8,19 +8,29 @@ import heapq
 from heapq import heappush, heappop
 from scipy.spatial.distance import cdist
 from collections import defaultdict
-from math import pi, floor, log10
+from math import pi, sin, cos, floor, log10
 
-class CloseRandomPack(object):
-    """Close random sphere packer using Jodrey and Tory's algorithm. At the
-    beginning of the simulation all spheres are placed randomly within the
-    domain. Each sphere has two diameters, and inner and an outer, which
-    approach each other during the simulation. The inner diameter, defined as
-    the minimum center-to-center distance, is the true diameter of the spheres
-    and defines the packing fraction. At each iteration the worst overlap
-    between spheres based on outer diameter is eliminated by moving the spheres
-    apart along the line joining their centers and the outer diameter is
-    decreased. Iterations continue until the two diameters converge or until
-    the desired packing fraction is reached.
+class SpherePacker(object):
+    """
+        Sphere packer using a combination of random sequential packing (RSP) and
+    close random packing (CRP). Since RSP is faster for small packing fractions,
+    spheres with a radius smaller than the desired final radius (and therefore
+    with a smaller packing fraction) are initialized within the domain using RSP.
+    Sphere centers are placed one by one at rondom, and placement attempts for
+    a spheres are made until the sphere is not overlapping any others. This
+    algorithm uses a lattice over the domain to speed up the  nearest neighbor
+    search by only searching for a sphere's neighbors within that lattice cell.
+
+	If the desired packing fraction is too large for RSP to be efficient,
+    The initial configuration of spheres is used as a starting point for CRP
+    using Jodrey and Tory's algorithm. Each sphere is assigned two diameters,
+    and inner and an outer, which approach each other during the simulation.
+    The inner diameter, defined as the minimum center-to-center distance, is
+    the true diameter of the spheres and defines the packing fraction. At each
+    iteration the worst overlap between spheres based on outer diameter is
+    eliminated by moving the spheres apart along the line joining their centers
+    and the outer diameter is decreased. Iterations continue until the two
+    diameters converge or until the desired packing fraction is reached.
 
     Parameters
     ----------
@@ -93,6 +103,12 @@ class CloseRandomPack(object):
         True packing fraction of spheres calculated from inner diameter.
     outer_packing_fraction : float
         Nominal packing fraction of spheres calculated from outer diameter.
+    rmin : tuple
+	The minimum x, y, znd z coordinates allowed for the sphere center to
+	remain within the domain. Used to apply reflective boundary conditions.
+    rmax : tuple
+	The maximum x, y, znd z coordinates allowed for the sphere center to
+	remain within the domain. Used to apply reflective boundary conditions.
     spheres : numpy.ndarray, shape = [n_spheres, 3]
         Cartesian coordinates of sphere centers
     rods : list, shape = [n_rods, 3]
@@ -130,11 +146,14 @@ class CloseRandomPack(object):
         self._domain_radius = None
         self._contraction_rate = None
         self._lattice_dimension = None
+        self._cell_length = None
         self._seed = None
         self._cell_length = None
         self._diameter = None
         self._inner_diameter = None
-        self._outer_diameter= None
+        self._outer_diameter = None
+        self._rmin = None
+        self._rmax = None
 
         # Set attributes
         self.radius = radius
@@ -164,23 +183,23 @@ class CloseRandomPack(object):
         if geometry is 'cube':
             self.cell_length = [self.domain_length/i for i in
                                 self.lattice_dimension]
-            self.bc_min = 3*(self.radius,)
-            self.bc_max = 3*(self.domain_length-self.radius,)
+            self.rmin = 3*(self.radius,)
+            self.rmax = 3*(self.domain_length-self.radius,)
         elif geometry is 'cylinder':
             self.cell_length = [
                 2*self.domain_radius/self.lattice_dimension[0],
                 2*self.domain_radius/self.lattice_dimension[1],
                 self.domain_length/self.lattice_dimension[2]]
-            self.bc_min = (self.radius-self.domain_radius,
+            self.rmin = (self.radius-self.domain_radius,
                            self.radius-self.domain_radius, self.radius)
-	    self.bc_max = (self.domain_radius-self.radius,
+	    self.rmax = (self.domain_radius-self.radius,
 			   self.domain_radius-self.radius,
                            self.domain_length-self.radius)
         elif geometry is 'sphere':
             self.cell_length = [2*self.domain_radius/i for i in
                                 self.lattice_dimension]
-            self.bc_min = 3*(self.radius-self.domain_radius,)
-            self.bc_max = 3*(self.domain_radius-self.radius,)
+            self.rmin = 3*(self.radius-self.domain_radius,)
+            self.rmax = 3*(self.domain_radius-self.radius,)
         self.contraction_rate = contraction_rate
         self.seed = seed
         self.diameter = 2*self.radius
@@ -230,6 +249,10 @@ class CloseRandomPack(object):
         return self._lattice_dimension
 
     @property
+    def cell_length(self):
+        return self._cell_length
+
+    @property
     def seed(self):
         return self._seed
 
@@ -265,6 +288,14 @@ class CloseRandomPack(object):
     @property
     def initial_outer_diameter(self):
         return self._initial_outer_diameter
+
+    @property
+    def rmin(self):
+        return self._rmin
+
+    @property
+    def rmax(self):
+        return self._rmax
 
     @property
     def inner_packing_fraction(self):
@@ -395,6 +426,10 @@ class CloseRandomPack(object):
                 raise ValueError(msg)
         self._lattice_dimension = [i for i in d]
 
+    @cell_length.setter
+    def cell_length(self, cell_length):
+        self._cell_length = cell_length
+
     @seed.setter
     def seed(self, seed):
         self._seed = seed
@@ -418,6 +453,14 @@ class CloseRandomPack(object):
     @initial_outer_diameter.setter
     def initial_outer_diameter(self, initial_outer_diameter):
         self._initial_outer_diameter = initial_outer_diameter
+
+    @rmin.setter
+    def rmin(self, rmin):
+        self._rmin = rmin
+
+    @rmax.setter
+    def rmax(self, rmax):
+        self._rmax = rmax
 
 
     def _random_point_cube(self):
@@ -634,14 +677,14 @@ class CloseRandomPack(object):
         """
 
         for k in range(3):
-            if self.spheres[i][k] < self.bc_min[k]:
-                self.spheres[i][k] = self.bc_min[k]
-            elif self.spheres[i][k] > self.bc_max[k]:
-                self.spheres[i][k] = self.bc_max[k]
-            if self.spheres[j][k] < self.bc_min[k]:
-                self.spheres[j][k] = self.bc_min[k]
-            elif self.spheres[j][k] > self.bc_max[k]:
-                self.spheres[j][k] = self.bc_max[k]
+            if self.spheres[i][k] < self.rmin[k]:
+                self.spheres[i][k] = self.rmin[k]
+            elif self.spheres[i][k] > self.rmax[k]:
+                self.spheres[i][k] = self.rmax[k]
+            if self.spheres[j][k] < self.rmin[k]:
+                self.spheres[j][k] = self.rmin[k]
+            elif self.spheres[j][k] > self.rmax[k]:
+                self.spheres[j][k] = self.rmax[k]
 
 
     def _repel_spheres(self, i, j, d):
@@ -898,9 +941,9 @@ class CloseRandomPack(object):
     def _initialize_spheres(self):
 	"""Initial random sequential packing of spheres. This is done to speed
 	up the algorithm since for small packing fractions random sequential
-        packing is fast. Rather than choosing random coordinates for the sphere
-        centers, the spheres are placed randomly to be at least some inital
-        distance apart.
+	packing is faster than Jodrey Tory algorithm. Rather than choosing
+	random coordinates for the sphere centers, the spheres are placed
+        randomly to be at least some inital distance apart.
 
         """
 
@@ -913,16 +956,12 @@ class CloseRandomPack(object):
         n = int(self.domain_length/(4*radius))
         m = int(self.domain_radius/(2*radius))
         if self.geometry is 'cube':
-            lattice_dimension = [n, n, n]
-            cell_length = [self.domain_length/i for i in lattice_dimension]
+            cell_length = 3*[self.domain_length/n,]
         elif self.geometry is 'cylinder':
-            lattice_dimension = [m, m, n]
-            cell_length = [2*self.domain_radius/lattice_dimension[0],
-                           2*self.domain_radius/lattice_dimension[1],
-                           self.domain_length/lattice_dimension[2]]
+            cell_length = [2*self.domain_radius/m, 2*self.domain_radius/m,
+                           self.domain_length/n]
         elif self.geometry is 'sphere':
-            lattice_dimension = [m, m, m]
-	    cell_length = [2*self.domain_radius/i for i in lattice_dimension]
+	    cell_length = 3*[2*self.domain_radius/m,]
 
 
         mesh = defaultdict(list)
@@ -998,7 +1037,7 @@ class CloseRandomPack(object):
                 self._reduce_outer_diameter()
 
                 # Move spheres the two closest spheres apart so they are separated
-                # by one diameter
+                # by one outer diameter
                 self._repel_spheres(i, j, d)
 
                 # Update rod list with new nearest neighbors
