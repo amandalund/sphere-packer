@@ -912,9 +912,4 @@ class CloseRandomPack(object):
                 if self.inner_diameter >= self.diameter or not self.rods:
                     break
 
-        print "Inner diameter: {}".format(self.inner_diameter)
-        print "Outer diameter: {}".format(self.outer_diameter)
-        print "Inner packing fraction: {}".format(self.inner_packing_fraction)
-        print "Outer packing fraction: {}".format(self.outer_packing_fraction)
-
         return self.spheres
