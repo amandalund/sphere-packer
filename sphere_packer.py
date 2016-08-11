@@ -742,10 +742,10 @@ class SpherePacker(object):
         # placed at index k.
         idx = list(self.mesh[self.cell_index(self.spheres[i])])
         dists = cdist([self.spheres[i]], self.spheres[idx])[0]
-        try:
+        if dists.size > 1:
             j = dists.argpartition(1)[1]
             return idx[j], dists[j]
-        except:
+        else:
             return None, None
 
 
