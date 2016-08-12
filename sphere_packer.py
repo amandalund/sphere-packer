@@ -2,11 +2,11 @@ from __future__ import division
 import numpy as np
 import itertools
 import scipy.spatial
+from scipy.spatial.distance import cdist
 import random
 from random import uniform, gauss
 import heapq
 from heapq import heappush, heappop
-from scipy.spatial.distance import cdist
 from collections import defaultdict
 from math import pi, sin, cos, floor, log10
 
@@ -146,14 +146,6 @@ class SpherePacker(object):
         self._domain_radius = None
         self._contraction_rate = None
         self._lattice_dimension = None
-        self._cell_length = None
-        self._seed = None
-        self._cell_length = None
-        self._diameter = None
-        self._inner_diameter = None
-        self._outer_diameter = None
-        self._rmin = None
-        self._rmax = None
 
         # Set attributes
         self.radius = radius
@@ -249,18 +241,6 @@ class SpherePacker(object):
         return self._lattice_dimension
 
     @property
-    def cell_length(self):
-        return self._cell_length
-
-    @property
-    def seed(self):
-        return self._seed
-
-    @property
-    def cell_length(self):
-        return self._cell_length
-
-    @property
     def sphere_volume(self):
         return 4/3 * pi * self.radius**3
 
@@ -272,30 +252,6 @@ class SpherePacker(object):
             return (self.domain_length * pi * self.domain_radius**2)
         elif self.geometry is 'sphere':
             return 4/3 * pi * self.domain_radius**3
-
-    @property
-    def diameter(self):
-        return self._diameter
-
-    @property
-    def inner_diameter(self):
-        return self._inner_diameter
-
-    @property
-    def outer_diameter(self):
-        return self._outer_diameter
-
-    @property
-    def initial_outer_diameter(self):
-        return self._initial_outer_diameter
-
-    @property
-    def rmin(self):
-        return self._rmin
-
-    @property
-    def rmax(self):
-        return self._rmax
 
     @property
     def inner_packing_fraction(self):
@@ -425,42 +381,6 @@ class SpherePacker(object):
             any(self.domain_radius/n < 2*self.radius for n in d)):
                 raise ValueError(msg)
         self._lattice_dimension = [i for i in d]
-
-    @cell_length.setter
-    def cell_length(self, cell_length):
-        self._cell_length = cell_length
-
-    @seed.setter
-    def seed(self, seed):
-        self._seed = seed
-
-    @cell_length.setter
-    def cell_length(self, cell_length):
-        self._cell_length = cell_length
-
-    @diameter.setter
-    def diameter(self, diameter):
-        self._diameter = diameter
-
-    @inner_diameter.setter
-    def inner_diameter(self, inner_diameter):
-        self._inner_diameter = inner_diameter
-
-    @outer_diameter.setter
-    def outer_diameter(self, outer_diameter):
-        self._outer_diameter = outer_diameter
-
-    @initial_outer_diameter.setter
-    def initial_outer_diameter(self, initial_outer_diameter):
-        self._initial_outer_diameter = initial_outer_diameter
-
-    @rmin.setter
-    def rmin(self, rmin):
-        self._rmin = rmin
-
-    @rmax.setter
-    def rmax(self, rmax):
-        self._rmax = rmax
 
 
     def _random_point_cube(self):
@@ -986,7 +906,6 @@ class SpherePacker(object):
             for idx in self.cell_list(p, diameter, cell_length):
                 mesh[idx].append(p)
 
-        mesh.clear()
         self.spheres = np.array(self.spheres)
 
 
